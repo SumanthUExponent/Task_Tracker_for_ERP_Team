@@ -1,0 +1,10 @@
+# generated or personal — never commit
+briefs/
+state/
+__pycache__/
+prompts/*.md
+!prompts/templates/
+.superpowers/
+.serena/
+session-logs/
+docs/plans/

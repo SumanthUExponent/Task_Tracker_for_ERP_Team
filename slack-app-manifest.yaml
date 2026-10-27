@@ -1,0 +1,19 @@
+display_information:
+  name: Daily Brief
+  description: Your 9am to-do brief and 6pm 3W recap, sent only to you
+features:
+  bot_user:
+    display_name: Daily Brief
+    always_online: false
+  app_home:
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - im:write
+      - im:history
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
