@@ -32,6 +32,7 @@ TICKTICK_TOOLS = ["list_projects", "create_project", "get_project_with_undone_ta
                   "batch_add_tasks", "batch_update_tasks", "update_task", "create_task", "list_tags", "create_tag"]
 DRIVE_MEETINGS_URL = SETTINGS.get("MEETINGS_DRIVE_URL", "")
 UNSAFE_FILENAME = re.compile(r'[/\\:*?"<>|]')
+PLAN_REFUSAL = "only available to paid Granola tiers"
 SAVED_OUTPUT = re.compile(r"(?:Output has been saved to|Full output saved to:) (\S+\.(?:txt|json))")
 # small enough to come back inline, where Haiku can see next_offset; an 80KB page is swapped for a file pointer
 PAGE_CHARS = 30000
@@ -117,7 +118,8 @@ def parse_meetings(text):
 
 
 def join_transcript(pages):
-    """(text, status): status is complete, incomplete (a page is missing), pending (retry later) or none."""
+    """(text, status): complete · incomplete (a page is missing) · pending (retry later) · plan (refused by the
+    Granola plan; archive the notes and flag the gap) · none (never recorded)."""
     parsed = []
     for page in pages:
         try:
@@ -127,7 +129,7 @@ def join_transcript(pages):
     for page in parsed:
         if page.get("transcript") is None or page.get("transcript_unavailable"):
             reason = (page.get("transcript_unavailable") or {}).get("reason", "")
-            return "", "pending" if reason == "transcript_pending" else "none"
+            return "", {"transcript_pending": "pending", "plan": "plan"}.get(reason, "none")
     text, expected = "", 0
     for page in sorted(parsed, key=lambda p: p.get("offset", 0)):
         if page.get("offset", 0) != expected:
@@ -156,7 +158,7 @@ def _links(names):
     return json.dumps([f"[[{n}]]" for n in names if n], ensure_ascii=False)
 
 
-def render_note(meeting, transcript, meta, now):
+def render_note(meeting, transcript, meta, now, transcript_missing=False):
     when = datetime.fromisoformat(meeting["meeting_at"].replace("Z", "+00:00")).astimezone(IST)
     actions = [f"{a.get('owner') or 'Unassigned'} — {a.get('task', '')}" for a in meta.get("action_items", [])]
     front = {
@@ -194,7 +196,8 @@ def render_note(meeting, transcript, meta, now):
     if meeting["attachments"]:
         lines += ["## Screen captures", "",
                   *(f"- {a.get('captured_at', '')[11:16]} UTC — {a['text']}" for a in meeting["attachments"]), ""]
-    lines += ["## Transcript", "", transcript or "_No transcript recorded._", ""]
+    missing = "_Transcript not saved: the Granola plan does not share transcripts. Re-run after upgrading._"
+    lines += ["## Transcript", "", transcript or (missing if transcript_missing else "_No transcript recorded._"), ""]
     return "\n".join(lines)
 
 
@@ -249,6 +252,10 @@ def _collect_pages(pages, tool_input, text):
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
+        if PLAN_REFUSAL in text:
+            # a plain-text refusal is final until the Granola plan changes; record it as a reason
+            pages.setdefault(tool_input.get("meeting_id"), []).append(
+                json.dumps({"transcript": None, "transcript_unavailable": {"reason": "plan"}}))
         return
     for entry in data.get("meetings") or [data]:
         meeting_id = entry.get("meeting_id") or entry.get("id") or tool_input.get("meeting_id")
@@ -282,11 +289,12 @@ def archive_batch(ids, root, state_dir, now, run=run_claude):
         name = note_name(meeting["meeting_at"], meeting.get("title", "Untitled"))
         folder = root / name[:4]
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / name).write_text(render_note(meeting, transcript, meta, now))
+        (folder / name).write_text(render_note(meeting, transcript, meta, now, transcript_missing=status == "plan"))
         archive[meeting_id] = {"note": name[:-3], "title": meeting.get("title", ""), "date": name[:15],
                                "summary": meta.get("summary", ""),
                                "attendees": [p["name"] for p in meeting["attendees"]],
                                "url": meeting.get("url", ""),
+                               "transcript_missing": status == "plan",
                                "actions": [f"{a.get('owner') or 'Unassigned'} — {a.get('task', '')}"
                                            for a in meta.get("action_items", [])]}
         written.append(meeting_id)

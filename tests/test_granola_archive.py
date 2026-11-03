@@ -195,6 +195,19 @@ class ArchiveTest(unittest.TestCase):
         self.assertEqual(self.archive(stream), [MID])
         self.assertIn("persisted transcript", next(self.root.glob("2026/*.md")).read_text())
 
+    def test_plan_refusal_archives_notes_and_flags_the_gap(self):
+        refusal = ("Transcripts are only available to paid Granola tiers. Do not retry unless the plan changes. "
+                   "Review your Granola plan: https://notes.granola.ai/settings/team-and-billing")
+        stream = events([("get_meetings", {"meeting_ids": [MID]}, MEETINGS_TEXT),
+                         ("get_meeting_transcript", {"meeting_id": MID}, refusal)])
+        self.assertEqual(self.archive(stream), [MID])
+        note = next(self.root.glob("2026/*.md")).read_text()
+        self.assertIn("transcript_chars: 0", note)
+        self.assertIn("Transcript not saved: the Granola plan does not share transcripts", note)
+        self.assertIn("Two-stage approach agreed", note)
+        archive = json.loads((self.state / "granola_archived.json").read_text())
+        self.assertTrue(archive[MID]["transcript_missing"])
+
     def test_missing_metadata_still_archives(self):
         stream = events([("get_meetings", {"meeting_ids": [MID]}, MEETINGS_TEXT),
                          ("get_meeting_transcript", {"meeting_id": MID}, transcript_page(0, "hi", total=2))],
